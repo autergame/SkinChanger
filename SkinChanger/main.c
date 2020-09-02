@@ -65,43 +65,43 @@ DWORD FindAddress(uint8_t* signature, uint8_t* mask, int length, uint8_t* basead
             return i;
     return 0;
 }
-DWORD AllocateMemory(HANDLE handle, DWORD size)
+void* AllocateMemory(HANDLE handle, DWORD size)
 {
-    DWORD ptr = VirtualAllocEx(handle, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (ptr == 0)
+    void* ptr = VirtualAllocEx(handle, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (!ptr)
         printf("\nFailed to allocate memory\n");
     return ptr;
 }
-uint8_t* ReadMemory(HANDLE handle, DWORD address, DWORD size)
+uint8_t* ReadMemory(HANDLE handle, void* address, DWORD size)
 {
     uint8_t* buffer = (uint8_t*)malloc(size);
     if (!ReadProcessMemory(handle, address, buffer, size, NULL))
     {
-        printf("\nFailed to read memory: %u\n", address);
+        printf("\nFailed to read memory: %p\n", address);
         return 0;
     }
     return buffer;
 }
-uint8_t WriteMemory(HANDLE handle, DWORD address, uint8_t* buffer, DWORD length)
+uint8_t WriteMemory(HANDLE handle, void* address, uint8_t* buffer, DWORD length)
 {
     if (!WriteProcessMemory(handle, address, buffer, length, NULL))
     {
-        printf("\nFailed to write memory: %u\n", address);
+        printf("\nFailed to write memory: %p\n", address);
         return 0;
     }
     return 1;
 }
-uint8_t MarkMemoryExecutable(HANDLE handle, DWORD address, DWORD size)
+uint8_t MarkMemoryExecutable(HANDLE handle, void* address, DWORD size)
 {
     DWORD old = 0;
     if (!VirtualProtectEx(handle, address, size, PAGE_EXECUTE, &old))
     {
-        printf("\nFailed to mark region as executable: %u\n", address);
+        printf("\nFailed to mark region as executable: %p\n", address);
         return 0;
     }
     return 1;
 }
-DWORD WaitPointerNonZero(HANDLE handle, DWORD address)
+DWORD WaitPointerNonZero(HANDLE handle, void* address)
 {
     uint32_t buffer;
     do
@@ -109,7 +109,7 @@ DWORD WaitPointerNonZero(HANDLE handle, DWORD address)
         Sleep(1);
         if (!ReadProcessMemory(handle, address, &buffer, 4, NULL))
         {
-            printf("\nFailed to wait pointer non zero: %u\n", address);
+            printf("\nFailed to wait pointer non zero: %p\n", address);
             return 0;
         }
     } while (buffer == 0);
@@ -224,22 +224,22 @@ DWORD WINAPI modskin(LPVOID Param)
         WaitForInputIdle(process->handle, INFINITE);
         uint8_t* buffer = (uint8_t*)malloc(process->baselength);
         for (DWORD p = 0; p != process->baselength; p += 0x1000)
-            ReadProcessMemory(process->handle, process->baseaddress + p, buffer + p, 0x1000, NULL);
+            ReadProcessMemory(process->handle, (void*)(process->baseaddress + p), buffer + p, 0x1000, NULL);
         DWORD res_fp = FindAddress(fpsignature, fpmask, 16, buffer, process->baselength) + 6;
         DWORD res_pmeth = FindAddress(pmethsignature, pmethmask, 29, buffer, process->baselength) + 14;
         if (res_fp == 6 || res_pmeth == 14)
             printf("\nFailed to get offsets!\n");
         DWORD off_fp = *((DWORD*)(buffer + res_fp)) - process->baseaddress;
         DWORD off_pmeth = *((DWORD*)(buffer + res_pmeth)) - process->baseaddress;
-        DWORD codePointer = AllocateMemory(process->handle, 0x900);
+        void* codePointer = AllocateMemory(process->handle, 0x900);
         assert(codePointer != 0);
-        DWORD codeVerifyPointer = codePointer + 0x000;
-        DWORD codePrefixFnPointer = codePointer + 0x100;
-        DWORD codeOpenPointer = codePointer + 0x200;
-        DWORD codeCheckAccessPointer = codePointer + 0x300;
-        DWORD codeCreateIteratorPointer = codePointer + 0x400;
-        DWORD codeVectorDeleterPointer = codePointer + 0x500;
-        DWORD codeIsRadsPointer = codePointer + 0x600;
+        void* codeVerifyPointer = (DWORD)codePointer + 0x000;
+        void* codePrefixFnPointer = (DWORD)codePointer + 0x100;
+        void* codeOpenPointer = (DWORD)codePointer + 0x200;
+        void* codeCheckAccessPointer = (DWORD)codePointer + 0x300;
+        void* codeCreateIteratorPointer = (DWORD)codePointer + 0x400;
+        void* codeVectorDeleterPointer = (DWORD)codePointer + 0x500;
+        void* codeIsRadsPointer = (DWORD)codePointer + 0x600;
         assert(WriteMemory(process->handle, codeVerifyPointer, codeVerify, 0x10) != 0);
         assert(WriteMemory(process->handle, codePrefixFnPointer, PrefixFn, 0x30) != 0);
         assert(WriteMemory(process->handle, codeOpenPointer, Open, 0x50) != 0);
@@ -250,8 +250,8 @@ DWORD WINAPI modskin(LPVOID Param)
         assert(MarkMemoryExecutable(process->handle, codePointer, 0x900) != 0);
         DWORD modifiedPMethPointer = AllocateMemory(process->handle, sizeof(EVP_PKEY_METHOD));
         assert(modifiedPMethPointer != 0);
-        DWORD orgignalPMethArrayPointer = off_pmeth + process->baseaddress;
-        DWORD originalPMethFirstPointer = WaitPointerNonZero(process->handle, orgignalPMethArrayPointer);
+        void* orgignalPMethArrayPointer = off_pmeth + process->baseaddress;
+        void* originalPMethFirstPointer = WaitPointerNonZero(process->handle, orgignalPMethArrayPointer);
         EVP_PKEY_METHOD* originalPMeth = (EVP_PKEY_METHOD*)ReadMemory(process->handle, originalPMethFirstPointer, sizeof(EVP_PKEY_METHOD));
         assert(originalPMeth != 0);
         originalPMeth->verify = codeVerifyPointer;
@@ -493,15 +493,15 @@ uint8_t* sha256_final(SHA256_CTX* ctx)
         memset(ctx->data, 0, 56);
     }
 
-    ctx->bitlen += ctx->datalen * 8;
-    ctx->data[63] = ctx->bitlen;
-    ctx->data[62] = ctx->bitlen >> 8;
-    ctx->data[61] = ctx->bitlen >> 16;
-    ctx->data[60] = ctx->bitlen >> 24;
-    ctx->data[59] = ctx->bitlen >> 32;
-    ctx->data[58] = ctx->bitlen >> 40;
-    ctx->data[57] = ctx->bitlen >> 48;
-    ctx->data[56] = ctx->bitlen >> 56;
+    ctx->bitlen += (uint64_t)(ctx->datalen * 8);
+    ctx->data[63] = (uint8_t)ctx->bitlen;
+    ctx->data[62] = (uint8_t)(ctx->bitlen >> 8);
+    ctx->data[61] = (uint8_t)(ctx->bitlen >> 16);
+    ctx->data[60] = (uint8_t)(ctx->bitlen >> 24);
+    ctx->data[59] = (uint8_t)(ctx->bitlen >> 32);
+    ctx->data[58] = (uint8_t)(ctx->bitlen >> 40);
+    ctx->data[57] = (uint8_t)(ctx->bitlen >> 48);
+    ctx->data[56] = (uint8_t)(ctx->bitlen >> 56);
     sha256_transform(ctx, ctx->data);
 
     uint8_t* hash = (uint8_t*)malloc(8);
@@ -553,7 +553,7 @@ HashTablefh* createHashTablefh(size_t size)
 {
     HashTablefh* t = (HashTablefh*)malloc(sizeof(HashTablefh));
     t->size = size;
-    t->list = (struct node**)calloc(size, sizeof(struct node*));
+    t->list = (struct nodefh**)calloc(size, sizeof(struct nodefh*));
     return t;
 }
 void insertHashTablefh(HashTablefh* t, uint64_t key, FileHeader* val)
@@ -629,7 +629,7 @@ char* extractdata(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type)
         {
             char* compresseddata = (char*)malloc(fh->CompressedSize);
             fread(compresseddata, fh->CompressedSize, 1, fp);
-            int error = uncompress(data, fh->FileSize, compresseddata, fh->CompressedSize);
+            int error = uncompress(data, (uLongf)fh->FileSize, compresseddata, fh->CompressedSize);
             if (error != Z_OK)
                 printf("%s\n", zError(error));
             break;
@@ -659,14 +659,14 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
             break;
         case 2:
         {
-            uLong asize = compressBound(siz);
+            uLongf asize = compressBound(siz);
             datae = (char*)malloc(asize);
-            *osize = compress(datae, asize, data, siz);
+            *osize = compress(datae, &asize, data, siz);
             break;
         }
         case 3:
         {
-            uLong asize = ZSTD_compressBound(siz);
+            size_t asize = ZSTD_compressBound(siz);
             datae = (char*)malloc(asize);
             *osize = ZSTD_compress(datae, asize, data, siz, 3);
             break;
@@ -768,11 +768,17 @@ int main(int argc, char** argv)
     sprintf(pathfile, "%sDATA\\FINAL\\Champions\\", overlay);
     if(directoryexist(pathfile) == FALSE)
         createfolder(pathfile);
-    for (int i = 0; i < strlen(overlay); i++)
+    for (size_t i = 0; i < strlen(overlay); i++)
         if (overlay[i] == '\\')
             overlay[i] = '/';
 
     HANDLE ThreadHandle = CreateThread(NULL, 0, modskin, overlay, 0, NULL);
+    if (ThreadHandle == INVALID_HANDLE_VALUE || ThreadHandle == NULL)
+    {
+        printf("Failed to CreateThread: %d.\n", GetLastError());
+        scanf("press enter to exit.");
+        return 1;
+    }
     FILE* filea = fopen("C:/Riot Games/League of Legends/Plugins/rcp-be-lol-game-data/default-assets.wad", "rb");
 
     fseek(filea, 268, SEEK_SET);
@@ -808,7 +814,7 @@ int main(int argc, char** argv)
 
     cJSON* jsone = cJSON_ParseWithLength(datae, strlen(datae));
     skinsname** sknn = (skinsname**)malloc(sizeof(skinsname*) * sized);
-    for (int i = 0; i < sized; i++)
+    for (size_t i = 0; i < sized; i++)
     {
         int sizek = 1, ik = 0;
         sknn[i] = (skinsname*)malloc(sizeof(skinsname));
@@ -853,7 +859,7 @@ int main(int argc, char** argv)
             break;
 
         int choose = 0;
-        for (int i = 0; i < sized; i++)
+        for (size_t i = 0; i < sized; i++)
         {
             if (strcicmp(Champion, nameida[i]->name) == 0 || strcicmp(Champion, nameida[i]->alias) == 0)
             {
@@ -882,7 +888,7 @@ int main(int argc, char** argv)
             insertHashTablefh(hasht, ori->PathHash, ori);
         }
 
-        for (int k = 0; k < sknn[choose]->size; k++)
+        for (uint32_t k = 0; k < sknn[choose]->size; k++)
             printf("%d: %s\n", k + 1, sknn[choose]->names[k]->nameone);
 
         WIN32_FIND_DATA info;
