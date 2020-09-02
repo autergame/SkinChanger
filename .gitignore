@@ -3,5 +3,8 @@
 *.pdb
 *.iobj
 *.ipdb
+Debug/
 SkinChanger/Debug/
 SkinChanger/Release/
+Debug/Overlay/
+Release/Overlay/
