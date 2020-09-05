@@ -609,9 +609,10 @@ void memfread(void* buf, size_t bytes, char** membuf)
     memcpy(buf, *membuf, bytes);
     *membuf += bytes;
 }
-char* extractdata(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type)
+char* extractdata(char* champpath, uint64_t hash, HashTablefh* hasht, FILE* fp, uint8_t* type)
 {
-    uint64_t hash = XXHash(champpath, strlen(champpath));
+    if(hash == NULL)
+        hash = XXHash(champpath, strlen(champpath));
     FileHeader* fh = lookupHashTablefh(hasht, hash);
     char* data = (char*)malloc(fh->FileSize);
     if (type != NULL)
@@ -620,7 +621,7 @@ char* extractdata(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type)
     switch (fh->Type)
     {
         case 0:
-            printf("ERROR UNCOMPRESSED TYPE NOT IMPLEMENTED 1\n");
+            fread(data, fh->FileSize, 1, fp);
             break;
         case 1:
             printf("ERROR REDIRECTION TYPE NOT IMPLEMENTED 1\n");
@@ -632,6 +633,7 @@ char* extractdata(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type)
             int error = uncompress(data, (uLongf)fh->FileSize, compresseddata, fh->CompressedSize);
             if (error != Z_OK)
                 printf("%s\n", zError(error));
+            free(compresseddata);
             break;
         }
         case 3:
@@ -641,6 +643,7 @@ char* extractdata(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type)
             size_t error = ZSTD_decompress(data, fh->FileSize, compresseddata, fh->CompressedSize);
             if (ZSTD_isError(error))
                 printf("%s\n", ZSTD_getErrorName(error));
+            free(compresseddata);
             break;
         }
     }
@@ -652,7 +655,7 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
     switch (type)
     {
         case 0:
-            printf("ERROR UNCOMPRESSED TYPE NOT IMPLEMENTED 2\n");
+            datae = data;
             break;
         case 1:
             printf("ERROR REDIRECTION TYPE NOT IMPLEMENTED 2\n");
@@ -662,6 +665,7 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
             uLongf asize = compressBound(siz);
             datae = (char*)malloc(asize);
             *osize = compress(datae, &asize, data, siz);
+            free(data);
             break;
         }
         case 3:
@@ -669,6 +673,7 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
             size_t asize = ZSTD_compressBound(siz);
             datae = (char*)malloc(asize);
             *osize = ZSTD_compress(datae, asize, data, siz, 3);
+            free(data);
             break;
         }
     }
@@ -677,7 +682,7 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
 char* binmod(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type, uint32_t* offset, char* name)
 {
     *offset = 12;
-    char* data = extractdata(champpath, hasht, fp, type) + 8;
+    char* data = extractdata(champpath, NULL, hasht, fp, type) + 8;
     uint32_t linkedFilesCount = 0;
     memfread(&linkedFilesCount, 4, &data);
     uint16_t stringlength = 0;
@@ -794,8 +799,8 @@ int main(int argc, char** argv)
     }
     char* sadae = "plugins/rcp-be-lol-game-data/global/default/v1/skins.json";
     char* sadad = "plugins/rcp-be-lol-game-data/global/default/v1/champion-summary.json";
-    char* datae = extractdata(sadae, hashte, filea, NULL);
-    char* datad = extractdata(sadad, hashte, filea, NULL);
+    char* datae = extractdata(sadae, NULL, hashte, filea, NULL);
+    char* datad = extractdata(sadad, NULL, hashte, filea, NULL);
     fclose(filea);
 
     int i = 0;
@@ -888,8 +893,125 @@ int main(int argc, char** argv)
             insertHashTablefh(hasht, ori->PathHash, ori);
         }
 
-        for (uint32_t k = 0; k < sknn[choose]->size; k++)
-            printf("%d: %s\n", k + 1, sknn[choose]->names[k]->nameone);
+        int kmgf = 0;
+        uint32_t offsetwad = 0;
+        uint8_t retbreak = 0, foundname = 0;
+        size_t sizechamp = 0, indexchamp = 0;
+        skinsid** nameschamp = (skinsid**)calloc(1, 1);
+        for (uint32_t i = 0; i < fileCount; i++)
+        {
+            if (fharryb[i]->Type != 1)
+            {
+                kmgf++;
+                char* data = extractdata("", fharryb[i]->PathHash, hasht, filew, NULL);
+                offsetwad = 4;
+                uint32_t Signature = 0;
+                memfread(&Signature, 4, &data);
+                if (memcmp(&Signature, "PROP", 4) == 0)
+                {
+                    retbreak = 0;
+                    uint32_t Version = 0;
+                    memfread(&Version, 4, &data);
+                    if (Version >= 2)
+                    {
+                        uint32_t linkedFilesCount = 0;
+                        memfread(&linkedFilesCount, 4, &data);
+                        uint16_t stringlength = 0;
+                        offsetwad += 4;
+                        for (uint32_t k = 0; k < linkedFilesCount; k++)
+                        {
+                            memfread(&stringlength, 2, &data);
+                            data += stringlength;
+                            offsetwad += stringlength + 2;
+                        }
+                    }
+                    uint32_t entryCount = 0;
+                    memfread(&entryCount, 4, &data);
+                    uint32_t* entryTypes = (uint32_t*)calloc(entryCount, 4);
+                    memfread(entryTypes, entryCount * 4, &data);
+                    offsetwad += 8 + entryCount * 4;
+                    for (size_t l = 0; l < entryCount; l++)
+                    {
+                        uint32_t entryLength = 0;
+                        memfread(&entryLength, 4, &data);
+                        uint32_t entryKeyHash = 0;
+                        memfread(&entryKeyHash, 4, &data);
+                        uint16_t fieldcount = 0;
+                        memfread(&fieldcount, 2, &data);
+                        for (uint16_t k = 0; k < fieldcount; k++)
+                        {
+                            offsetwad += 5;
+                            entryLength -= 5;
+                            uint32_t name = 0;
+                            memfread(&name, 4, &data);
+                            uint8_t type = 0;
+                            memfread(&type, 1, &data);
+                            if (name == 762889000UL && type == 16)
+                            {
+                                foundname = 0;
+                                uint16_t stringlength = 0;
+                                memfread(&stringlength, 2, &data);
+                                char* namestring = (char*)calloc(stringlength + 1, 1);
+                                memfread(namestring, (size_t)stringlength, &data);
+                                namestring[stringlength] = '\0';
+                                entryLength -= 2 + stringlength;
+                                offsetwad += 2 + stringlength;
+                                char* pointer = strstr(namestring, "Base");
+                                if(pointer == NULL)
+                                    pointer = strstr(namestring, "Skin");
+                                if (pointer != NULL)
+                                {
+                                    namestring[pointer - namestring] = '\0';
+                                    size_t namesize = strlen(namestring);
+                                    char* namestringup = (char*)malloc(namesize);
+                                    memcpy(namestringup, namestring, namesize);
+                                    namestringup[namesize] = '\0';
+                                    for (size_t o = 0; o < namestring[o]; o++)
+                                        namestring[o] = tolower(namestring[o]);
+                                    for (size_t o = 0; o < sizechamp; o++)
+                                        if (strcmp(nameschamp[o]->nameone, namestring) == 0)
+                                            foundname = 1;
+                                    if (!foundname)
+                                    {
+                                        snprintf(champpath, 128, "data/characters/%s/skins/skin0.bin", namestring);
+                                        if (lookupHashTablefh(hasht, XXHash(champpath, strlen(champpath))) != NULL)
+                                        {
+                                            sizechamp += 1;
+                                            nameschamp = (skinsid**)realloc(nameschamp, sizechamp * sizeof(*nameschamp));
+                                            nameschamp[indexchamp] = (skinsid*)malloc(sizeof(skinsid));
+                                            nameschamp[indexchamp]->nameone = namestring;
+                                            nameschamp[indexchamp]->nametwo = namestringup;
+                                            indexchamp += 1;
+                                            retbreak = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        data += entryLength - 6;
+                        offsetwad += entryLength + 4;
+                        if (retbreak)
+                            break;
+                    }
+                } 
+                data -= offsetwad;
+                free(data);
+            }
+        }
+
+        foundname = 0;
+        for (size_t i = 0; i < sizechamp; i++)
+            if (strcmp(nameschamp[i], lower) == 0)
+                foundname = 1;
+        if (!foundname)
+        {
+            sizechamp += 1;
+            nameschamp = (skinsid**)realloc(nameschamp, sizechamp * sizeof(skinsid*));
+            nameschamp[indexchamp] = (skinsid*)malloc(sizeof(skinsid));
+            nameschamp[indexchamp]->nameone = lower;
+            nameschamp[indexchamp]->nametwo = nameida[choose]->alias;
+        }
 
         WIN32_FIND_DATA info;
         sprintf(fileFound, "%sDATA/FINAL/Champions/*.*", overlay);
@@ -901,6 +1023,9 @@ int main(int argc, char** argv)
 
         } while (FindNextFileA(hp, &info));
         FindClose(hp);
+
+        for (uint32_t k = 0; k < sknn[choose]->size; k++)
+            printf("%d: %s\n", k + 1, sknn[choose]->names[k]->nameone);
 
         uint8_t type = 1;
         uint32_t num = 0;
@@ -922,39 +1047,40 @@ int main(int argc, char** argv)
                 memcpy(fharry[i], fharryb[i], 32);
             }
 
-            snprintf(champpath, 128, "data/characters/%s/skins/skin0.bin", lower);
-            hashindex = XXHash(champpath, strlen(champpath));
-            for (uint32_t i = 0; i < fileCount; i++)
+            for (size_t i = 0; i < sizechamp; i++)
             {
-                if (fharry[i]->PathHash == hashindex)
+                snprintf(champpath, 128, "data/characters/%s/skins/skin0.bin", nameschamp[i]->nameone);
+                hashindex = XXHash(champpath, strlen(champpath));
+                for (uint32_t i = 0; i < fileCount; i++)
                 {
-                    fhpointer = fharry[i];
-                    break;
+                    if (fharry[i]->PathHash == hashindex)
+                    {
+                        fhpointer = fharry[i];
+                        break;
+                    }
                 }
-            }
-            snprintf(champpath, 128, "data/characters/%s/skins/%s.bin", lower, sknn[choose]->names[num - 1]->nametwo);
-            char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, nameida[choose]->alias);
-            fhpointer->NewData = compressdata(dataskin, type, offsete, &fhpointer->CompressedSize);
-            memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
-            fhpointer->FileSize = offsete;
-            free(dataskin);
+                snprintf(champpath, 128, "data/characters/%s/skins/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num - 1]->nametwo);
+                char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo);
+                fhpointer->NewData = compressdata(dataskin, type, offsete, &fhpointer->CompressedSize);
+                memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
+                fhpointer->FileSize = offsete;
 
-            snprintf(champpath, 128, "data/characters/%s/animations/skin0.bin", lower);
-            hashindex = XXHash(champpath, strlen(champpath));
-            for (uint32_t i = 0; i < fileCount; i++)
-            {
-                if (fharry[i]->PathHash == hashindex)
+                snprintf(champpath, 128, "data/characters/%s/animations/skin0.bin", nameschamp[i]->nameone);
+                hashindex = XXHash(champpath, strlen(champpath));
+                for (uint32_t i = 0; i < fileCount; i++)
                 {
-                    fhpointer = fharry[i];
-                    break;
+                    if (fharry[i]->PathHash == hashindex)
+                    {
+                        fhpointer = fharry[i];
+                        break;
+                    }
                 }
+                snprintf(champpath, 128, "data/characters/%s/animations/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num - 1]->nametwo);
+                char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo);
+                fhpointer->NewData = compressdata(dataanm, type, offsete, &fhpointer->CompressedSize);
+                memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
+                fhpointer->FileSize = offsete;
             }
-            snprintf(champpath, 128, "data/characters/%s/animations/%s.bin", lower, sknn[choose]->names[num - 1]->nametwo);
-            char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, nameida[choose]->alias);
-            fhpointer->NewData = compressdata(dataanm, type, offsete, &fhpointer->CompressedSize);
-            memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
-            fhpointer->FileSize = offsete;
-            free(dataanm);
 
             snprintf(FileName, 256, "%sDATA/FINAL/Champions/%s.wad.client", overlay, nameida[choose]->alias);
             FILE* filem = fopen(FileName, "wb");
