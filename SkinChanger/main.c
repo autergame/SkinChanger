@@ -624,9 +624,6 @@ char* extractdata(char* champpath, uint64_t hash, HashTablefh* hasht, FILE* fp, 
             fread(data, fh->FileSize, 1, fp);
             break;
         case 1:
-            printf("ERROR REDIRECTION TYPE NOT IMPLEMENTED 1\n");
-            break;
-        case 2:
         {
             char* compresseddata = (char*)malloc(fh->CompressedSize);
             fread(compresseddata, fh->CompressedSize, 1, fp);
@@ -636,6 +633,9 @@ char* extractdata(char* champpath, uint64_t hash, HashTablefh* hasht, FILE* fp, 
             free(compresseddata);
             break;
         }
+        case 2:
+            printf("ERROR REDIRECTION TYPE NOT IMPLEMENTED 1\n");
+            break;
         case 3:
         {
             char* compresseddata = (char*)malloc(fh->CompressedSize);
@@ -658,9 +658,6 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
             datae = data;
             break;
         case 1:
-            printf("ERROR REDIRECTION TYPE NOT IMPLEMENTED 2\n");
-            break;
-        case 2:
         {
             uLongf asize = compressBound(siz);
             datae = (char*)malloc(asize);
@@ -668,6 +665,9 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
             free(data);
             break;
         }
+        case 2:
+            printf("ERROR REDIRECTION TYPE NOT IMPLEMENTED 2\n");
+            break;
         case 3:
         {
             size_t asize = ZSTD_compressBound(siz);
@@ -893,19 +893,17 @@ int main(int argc, char** argv)
             insertHashTablefh(hasht, ori->PathHash, ori);
         }
 
-        int kmgf = 0;
         uint32_t offsetwad = 0;
         uint8_t retbreak = 0, foundname = 0;
         size_t sizechamp = 0, indexchamp = 0;
         skinsid** nameschamp = (skinsid**)calloc(1, 1);
         for (uint32_t i = 0; i < fileCount; i++)
         {
-            if (fharryb[i]->Type != 1)
+            if (fharryb[i]->Type != 2)
             {
-                kmgf++;
-                char* data = extractdata("", fharryb[i]->PathHash, hasht, filew, NULL);
                 offsetwad = 4;
                 uint32_t Signature = 0;
+                char* data = extractdata("", fharryb[i]->PathHash, hasht, filew, NULL);
                 memfread(&Signature, 4, &data);
                 if (memcmp(&Signature, "PROP", 4) == 0)
                 {
