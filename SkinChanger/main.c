@@ -791,9 +791,10 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
     }
     return datae;
 }
-char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uint32_t* offset, char* name)
+char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uint32_t* offset, char* name, char* change)
 {
     *offset = 12;
+    change[0] = toupper(change[0]);
     char* data = extractdata(champpath, NULL, hasht, fp, type) + 8;
     uint32_t linkedFilesCount = 0;
     memfread(&linkedFilesCount, 4, &data);
@@ -816,14 +817,26 @@ char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uin
         uint32_t entryKeyHash = 0;
         memfread(&entryKeyHash, 4, &data);
         data -= 4;
-        if (entryTypes[i] == 2607278582UL || entryTypes[i] == 4126869447UL)
+        if (entryTypes[i] == 0x9B67E9F6 || entryTypes[i] == 0xF5FB07C7)
         {
-            char* skinpro = (char*)calloc(128, 1);
-            snprintf(skinpro, 128, "Characters/%s/Skins/Skin0", name);
-            entryKeyHash = FNV1Hash(skinpro);
-            memcpy(data, &entryKeyHash, 4);
+            char* animpro = (char*)calloc(128, 1);
+            snprintf(animpro, 128, "Characters/%s/Animations/%s", name, change);
+            if (entryKeyHash == FNV1Hash(animpro))
+            {
+                char* skinpro = (char*)calloc(128, 1);
+                snprintf(skinpro, 128, "Characters/%s/Animations/Skin0", name);
+                entryKeyHash = FNV1Hash(skinpro);
+                memcpy(data, &entryKeyHash, 4);
+            }
+            else
+            {
+                char* skinpro = (char*)calloc(128, 1);
+                snprintf(skinpro, 128, "Characters/%s/Skins/Skin0", name);
+                entryKeyHash = FNV1Hash(skinpro);
+                memcpy(data, &entryKeyHash, 4);
+            }
         }
-        else if (entryTypes[i] == 4013559603UL)
+        else if (entryTypes[i] == 0xEF3A0F33)
         {
             char* skinpro = (char*)calloc(128, 1);
             snprintf(skinpro, 128, "Characters/%s/Skins/Skin0/Resources", name);
@@ -833,6 +846,7 @@ char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uin
         data += entryLength;
         *offset += entryLength + 4;
     }
+    change[0] = tolower(change[0]);
     data -= *offset;
     return data;
 }
@@ -1220,7 +1234,7 @@ int main(int argc, char** argv)
                     }
                 }
                 snprintf(champpath, 128, "data/characters/%s/skins/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num-1]->nametwo);
-                char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo);
+                char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo, sknn[choose]->names[num-1]->nametwo);
                 fhpointer->NewData = compressdata(dataskin, type, offsete, &fhpointer->CompressedSize);
                 memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
                 fhpointer->FileSize = offsete;
@@ -1236,7 +1250,7 @@ int main(int argc, char** argv)
                     }
                 }
                 snprintf(champpath, 128, "data/characters/%s/animations/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num-1]->nametwo);
-                char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo);
+                char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo, sknn[choose]->names[num-1]->nametwo);
                 fhpointer->NewData = compressdata(dataanm, type, offsete, &fhpointer->CompressedSize);
                 memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
                 fhpointer->FileSize = offsete;
