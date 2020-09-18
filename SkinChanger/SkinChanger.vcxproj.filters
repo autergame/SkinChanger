@@ -20,12 +20,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="../libs/zlib.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="../libs/zstd.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="cJSON.h">
       <Filter>Header Files</Filter>
     </ClInclude>

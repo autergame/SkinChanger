@@ -1,4 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
+#define CURL_STATICLIB
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,17 +7,127 @@
 #include <assert.h>
 #include <Windows.h>
 #include <direct.h>
+#include <locale.h>
 #include <Psapi.h>
 #include <TlHelp32.h>
 #include "cJSON.h"
-#include "../libs/zlib.h"
-#include "../libs/zstd.h"
+#include "libs/zlib.h"
+#include "libs/zstd.h"
+#include "libs/curl.h"
+#pragma comment(lib, "ws2_32")
+#pragma comment(lib, "crypt32")
+#pragma comment(lib, "wldap32")
+#pragma comment(lib, "advapi32")
+#pragma comment(lib, "normaliz")
+#pragma comment(lib, "libs/libcurl")
+#pragma comment(lib, "libs/zlibstatic")
+#pragma comment(lib, "libs/zstdstatic")
+
+static int mod_table[] = {
+    0, 2, 1
+};
+static char encoding_table[] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+    'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+    'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+    'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+    'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+    'w', 'x', 'y', 'z', '0', '1', '2', '3',
+    '4', '5', '6', '7', '8', '9', '+', '/'
+};
+char* base64_encode(char* data, int input_length)
+{
+    int output_length = 4 * ((input_length + 2) / 3);
+    char* encoded_data = (char*)calloc(output_length, 1);
+    for (int i = 0, j = 0; i < input_length;)
+    {
+        uint32_t octet_a = i < input_length ? (unsigned char)data[i++] : 0;
+        uint32_t octet_b = i < input_length ? (unsigned char)data[i++] : 0;
+        uint32_t octet_c = i < input_length ? (unsigned char)data[i++] : 0;
+        uint32_t triple = (octet_a << 0x10) + (octet_b << 0x08) + octet_c;
+        encoded_data[j++] = encoding_table[(triple >> 3 * 6) & 0x3F];
+        encoded_data[j++] = encoding_table[(triple >> 2 * 6) & 0x3F];
+        encoded_data[j++] = encoding_table[(triple >> 1 * 6) & 0x3F];
+        encoded_data[j++] = encoding_table[(triple >> 0 * 6) & 0x3F];
+    }
+    for (int i = 0; i < mod_table[input_length % 3]; i++)
+        encoded_data[output_length - 1 - i] = '=';
+    encoded_data[output_length] = '\0';
+    return encoded_data;
+}
+typedef struct url_data
+{
+    size_t size;
+    char* text;
+} url_data;
+size_t write_data(void* ptr, size_t size, size_t nmemb, url_data* data)
+{
+    size_t index = data->size;
+    size_t n = (size * nmemb);
+    data->size += (size * nmemb);
+    char* tmp = realloc(data->text, data->size + 1);
+    if (tmp)
+        data->text = tmp;
+    else {
+        if (data->text)
+            free(data->text);
+        fprintf(stderr, "Failed to allocate memory\n");
+        return 0;
+    }
+    memcpy((data->text + index), ptr, n);
+    data->text[data->size] = '\0';
+    return size * nmemb;
+}
+char* download_url(char* url, char* port, char* auth, char* protocol)
+{
+    url_data data;
+    data.size = 0;
+    data.text = calloc(1, 1);
+    curl_global_init(CURL_GLOBAL_ALL);
+    CURL* curl = curl_easy_init();
+    if (curl)
+    {
+        char* authfull = calloc(256, 1);
+        char* hostfull = calloc(256, 1);
+        struct curl_slist* headers = NULL;
+        sprintf(authfull, "Authorization: Basic %s", auth);
+        sprintf(hostfull, "https://127.0.0.1:%s%s", port, url);
+        curl_easy_setopt(curl, CURLOPT_URL, hostfull);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+        curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, protocol);
+        headers = curl_slist_append(headers, "Connection: close");
+        headers = curl_slist_append(headers, authfull);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK)
+            fprintf(stderr, "Failed to curl_easy_perform: %s\n", curl_easy_strerror(res));
+        curl_easy_cleanup(curl);
+        free(authfull);
+        free(hostfull);
+    }
+    curl_global_cleanup();
+    int nLength = MultiByteToWideChar(CP_UTF8, 0, data.text, strlen(data.text) + 1, NULL, NULL);
+    wchar_t* bstrWide = SysAllocStringLen(NULL, nLength);
+    MultiByteToWideChar(CP_UTF8, 0, data.text, strlen(data.text) + 1, bstrWide, nLength);
+    nLength = WideCharToMultiByte(CP_ACP, 0, bstrWide, -1, NULL, 0, NULL, NULL);
+    char* pszAnsi = (char*)malloc(nLength);
+    WideCharToMultiByte(CP_ACP, 0, bstrWide, -1, pszAnsi, nLength, NULL, NULL);
+    SysFreeString(bstrWide);
+    free(data.text);
+    return pszAnsi;
+}
 
 typedef struct Process
 {
     HANDLE handle;
+    DWORD processid;
     DWORD baselength;
     DWORD baseaddress;
+    char filepath[MAX_PATH];
 } Process;
 static const DWORD PROCESS_NEEDED_ACCESS = PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE;
 Process* ProcessFind(char* name)
@@ -39,8 +149,10 @@ Process* ProcessFind(char* name)
                     do {
                         if (strcmp(mEntry.szModule, name) == 0)
                         {
+                            process->processid = entry.th32ProcessID;
                             process->baselength = mEntry.modBaseSize;
                             process->baseaddress = (DWORD)mEntry.hModule;
+                            K32GetModuleFileNameExA(process->handle, NULL, process->filepath, MAX_PATH);
                             return process;
                         }
                     } while (Module32Next(hmodule, &mEntry));
@@ -526,41 +638,29 @@ uint8_t* SHA256(const uint8_t data[], size_t len)
     return sha256_final(ctx);
 }
 
-typedef struct FileHeader
+struct nodevoid
 {
-    uint64_t PathHash;
-    uint32_t Offset;
-    uint32_t CompressedSize;
-    uint32_t FileSize;
-    uint8_t Type;
-    uint8_t Duplicate;
-    uint16_t Unknown;
-    uint64_t SHA256;
-    char* NewData;
-} FileHeader;
-struct nodefh
-{
+    void* value;
     uint64_t key;
-    FileHeader* value;
-    struct nodefh* next;
+    struct nodevoid* next;
 };
-typedef struct HashTablefh
+typedef struct HashTableVoid
 {
     uint64_t size;
-    struct nodefh** list;
-} HashTablefh;
-HashTablefh* createHashTablefh(size_t size)
+    struct nodevoid** list;
+} HashTableVoid;
+HashTableVoid* createHashTableVoid(size_t size)
 {
-    HashTablefh* t = (HashTablefh*)malloc(sizeof(HashTablefh));
+    HashTableVoid* t = (HashTableVoid*)malloc(sizeof(HashTableVoid));
     t->size = size;
-    t->list = (struct nodefh**)calloc(size, sizeof(struct nodefh*));
+    t->list = (struct nodevoid**)calloc(size, sizeof(struct nodevoid*));
     return t;
 }
-void insertHashTablefh(HashTablefh* t, uint64_t key, FileHeader* val)
+void insertHashTableVoid(HashTableVoid* t, uint64_t key, void* val)
 {
     uint64_t pos = key % t->size;
-    struct nodefh* list = t->list[pos];
-    struct nodefh* temp = list;
+    struct nodevoid* list = t->list[pos];
+    struct nodevoid* temp = list;
     while (temp) {
         if (temp->key == key) {
             temp->value = val;
@@ -568,16 +668,16 @@ void insertHashTablefh(HashTablefh* t, uint64_t key, FileHeader* val)
         }
         temp = temp->next;
     }
-    struct nodefh* newNode = (struct nodefh*)malloc(sizeof(struct nodefh));
+    struct nodevoid* newNode = (struct nodevoid*)malloc(sizeof(struct nodevoid));
     newNode->key = key;
     newNode->value = val;
     newNode->next = list;
     t->list[pos] = newNode;
 }
-FileHeader* lookupHashTablefh(HashTablefh* t, uint64_t key)
+void* lookupHashTableVoid(HashTableVoid* t, uint64_t key)
 {
-    struct nodefh* list = t->list[key % t->size];
-    struct nodefh* temp = list;
+    struct nodevoid* list = t->list[key % t->size];
+    struct nodevoid* temp = list;
     while (temp) {
         if (temp->key == key) {
             return temp->value;
@@ -603,17 +703,29 @@ typedef struct skinsname
     uint32_t size;
     skinsid** names;
 } skinsname;
+typedef struct FileHeader
+{
+    uint64_t PathHash;
+    uint32_t Offset;
+    uint32_t CompressedSize;
+    uint32_t FileSize;
+    uint8_t Type;
+    uint8_t Duplicate;
+    uint16_t Unknown;
+    uint64_t SHA256;
+    char* NewData;
+} FileHeader;
 
 void memfread(void* buf, size_t bytes, char** membuf)
 {
     memcpy(buf, *membuf, bytes);
     *membuf += bytes;
 }
-char* extractdata(char* champpath, uint64_t hash, HashTablefh* hasht, FILE* fp, uint8_t* type)
+char* extractdata(char* champpath, uint64_t hash, HashTableVoid* hasht, FILE* fp, uint8_t* type)
 {
     if(hash == NULL)
         hash = XXHash(champpath, strlen(champpath));
-    FileHeader* fh = lookupHashTablefh(hasht, hash);
+    FileHeader* fh = (FileHeader*)lookupHashTableVoid(hasht, hash);
     char* data = (char*)malloc(fh->FileSize);
     if (type != NULL)
         *type = fh->Type;
@@ -679,7 +791,7 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
     }
     return datae;
 }
-char* binmod(char* champpath, HashTablefh* hasht, FILE* fp, uint8_t* type, uint32_t* offset, char* name)
+char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uint32_t* offset, char* name)
 {
     *offset = 12;
     char* data = extractdata(champpath, NULL, hasht, fp, type) + 8;
@@ -764,10 +876,11 @@ int strcicmp(char* a, char* b)
 
 int main(int argc, char** argv)
 {
+    setlocale(LC_ALL, "");
     char* overlay = (char*)calloc(256, 1);
     strcat_s(overlay, 256, argv[0]);
     char* overlaypos = strrchr(overlay, '\\');
-    overlay[overlaypos - overlay] = '\0';
+    overlay[overlaypos-overlay] = '\0';
     strcat_s(overlay, 256, "\\Overlay\\");
     char* pathfile = (char*)calloc(256, 1);
     sprintf(pathfile, "%sDATA\\FINAL\\Champions\\", overlay);
@@ -784,31 +897,58 @@ int main(int argc, char** argv)
         scanf("press enter to exit.");
         return 1;
     }
-    FILE* filea = fopen("C:/Riot Games/League of Legends/Plugins/rcp-be-lol-game-data/default-assets.wad", "rb");
 
-    fseek(filea, 268, SEEK_SET);
-    uint32_t fileCounta = 0;
-    fread(&fileCounta, 4, 1, filea);
+    printf("Waiting league client.\n");
+    Process* process = ProcessFind("LeagueClient.exe");
+    printf("League client found.\n");
+    char* leaguedir = (char*)calloc(256, 1);
+    strcat_s(leaguedir, 256, process->filepath);
+    char* leaguedirpos = strrchr(leaguedir, '\\');
+    leaguedir[leaguedirpos-leaguedir] = '\0';
+    for (size_t i = 0; i < strlen(leaguedir); i++)
+        if (leaguedir[i] == '\\')
+            leaguedir[i] = '/';
+    char* lockfiledir = (char*)calloc(256, 1);
+    snprintf(lockfiledir, 256, "%s/lockfile", leaguedir);
+    FILE* lockfile = fopen(lockfiledir, "rb");
+    fseek(lockfile, 0, SEEK_END);
+    long fsize = ftell(lockfile);
+    fseek(lockfile, 0, SEEK_SET);
+    char* lockstr = (char*)malloc(fsize + 1);
+    fread(lockstr, fsize, 1, lockfile);
+    lockstr[fsize] = '\0';
+    fclose(lockfile);
+    char* delim = ":";
+    strtok(lockstr, delim);
+    strtok(NULL, delim);
+    char* port = strtok(NULL, delim);
+    char* password = strtok(NULL, delim);
+    char* protocol = strtok(NULL, delim);
+    char* passauth = (char*)calloc(128, 1);
+    sprintf(passauth, "riot:%s", password);
+    char* auth = base64_encode(passauth, strlen(passauth));
 
-    HashTablefh* hashte = createHashTablefh(fileCounta);
-    for (uint32_t i = 0; i < fileCounta; i++)
+    char* locale = download_url("/riotclient/region-locale", port, auth, protocol);
+    cJSON* localejson = cJSON_ParseWithLength(locale, strlen(locale));
+    char* region = (char*)cJSON_GetObjectItem(localejson, "locale")->value;
+
+    cJSON* objd;
+    char* catalog = download_url("/lol-store/v1/catalog?inventoryType=[\"CHAMPION_SKIN\",\"CHROMA_BUNDLE\"]", port, auth, protocol);
+    cJSON* catalogjson = cJSON_ParseWithLength(catalog, strlen(catalog));
+    HashTableVoid* hashc = createHashTableVoid(cJSON_GetArraySize(catalogjson));
+    for (objd = catalogjson->child; objd != NULL; objd = objd->next)
     {
-        FileHeader* fh = (FileHeader*)calloc(1, sizeof(FileHeader));
-        fread(fh, 32, 1, filea);
-        insertHashTablefh(hashte, fh->PathHash, fh);
+        uint64_t key = *(uint64_t*)cJSON_GetObjectItem(objd, "itemId")->value;
+        cJSON* loca = cJSON_GetObjectItem(cJSON_GetObjectItem(objd, "localizations"), region);
+        insertHashTableVoid(hashc, key, cJSON_GetObjectItem(loca, "name")->value);
     }
-    char* sadae = "plugins/rcp-be-lol-game-data/global/default/v1/skins.json";
-    char* sadad = "plugins/rcp-be-lol-game-data/global/default/v1/champion-summary.json";
-    char* datae = extractdata(sadae, NULL, hashte, filea, NULL);
-    char* datad = extractdata(sadad, NULL, hashte, filea, NULL);
-    fclose(filea);
 
     int i = 0;
-    cJSON* objd;
-    cJSON* jsond = cJSON_ParseWithLength(datad, strlen(datad));
+    char* champsummary = download_url("/lol-game-data/assets/v1/champion-summary.json", port, auth, protocol);
+    cJSON* jsond = cJSON_ParseWithLength(champsummary, strlen(champsummary));
     size_t sized = cJSON_GetArraySize(jsond) - 1;
     nameid** nameida = (nameid**)malloc(sizeof(nameid*) * sized);
-    for (objd = jsond->child->next; objd != NULL; objd = objd->next)
+    for (objd = jsond->child; objd != NULL; objd = objd->next)
     {
         nameid* nameide = (nameid*)malloc(sizeof(nameid));
         nameide->id = *(uint32_t*)cJSON_GetObjectItem(objd, "id")->value;
@@ -817,22 +957,14 @@ int main(int argc, char** argv)
         nameida[i++] = nameide;
     }
 
-    cJSON* jsone = cJSON_ParseWithLength(datae, strlen(datae));
-    skinsname** sknn = (skinsname**)malloc(sizeof(skinsname*) * sized);
+    char* skins = download_url("/lol-game-data/assets/v1/skins.json", port, auth, protocol);
+    cJSON* jsone = cJSON_ParseWithLength(skins, strlen(skins));
+    skinsname** sknn = (skinsname**)calloc(sized, sizeof(skinsname*));
     for (size_t i = 0; i < sized; i++)
     {
-        int sizek = 1, ik = 0;
-        sknn[i] = (skinsname*)malloc(sizeof(skinsname));
-        for (int k = 1; k < 100; k++)
-        {
-            char* index = (char*)calloc(16, 1);
-            snprintf(index, 16, "%d%03d", nameida[i]->id, k);
-            if (cJSON_GetObjectItem(jsone, index) == NULL)
-                continue;
-            sizek++;
-        }
-        sknn[i]->size = sizek - 1;
-        sknn[i]->names = (skinsid**)malloc(sizeof(skinsid*) * sizek);
+        int ik = 0;
+        sknn[i] = (skinsname*)calloc(1, sizeof(skinsname));
+        sknn[i]->names = (skinsid**)calloc(1, sizeof(skinsid*));
         for (int k = 1; k < 100; k++)
         {
             char* index = (char*)calloc(16, 1);
@@ -840,11 +972,31 @@ int main(int argc, char** argv)
             cJSON* var = cJSON_GetObjectItem(jsone, index);
             if (var == NULL)
                 continue;
-            sknn[i]->names[ik] = (skinsid*)malloc(sizeof(skinsid));
+            sknn[i]->size += 1;            
+            uint32_t ide = *(uint32_t*)cJSON_GetObjectItem(var, "id")->value;
+            sknn[i]->names = (skinsid**)realloc(sknn[i]->names, sknn[i]->size * sizeof(skinsid*));
+            sknn[i]->names[ik] = (skinsid*)calloc(1, sizeof(skinsid));
             sknn[i]->names[ik]->nameone = cJSON_GetObjectItem(var, "name")->value;
             sknn[i]->names[ik]->nametwo = (char*)calloc(16, 1);
-            snprintf(sknn[i]->names[ik]->nametwo, 16, "skin%d", k);
-            ik++;
+            snprintf(sknn[i]->names[ik++]->nametwo, 16, "skin%d", ide % 100);
+            cJSON* chr = cJSON_GetObjectItem(var, "chromas");
+            if (chr != NULL)
+            {
+                for (objd = chr->child; objd != NULL; objd = objd->next)
+                {
+                    uint32_t id = *(uint32_t*)cJSON_GetObjectItem(objd, "id")->value;
+                    char* name = (char*)lookupHashTableVoid(hashc, id);
+                    if (name != NULL)
+                    {
+                        sknn[i]->size += 1;
+                        sknn[i]->names = (skinsid**)realloc(sknn[i]->names, sknn[i]->size * sizeof(skinsid*));
+                        sknn[i]->names[ik] = (skinsid*)calloc(1, sizeof(skinsid));
+                        sknn[i]->names[ik]->nameone = name;
+                        sknn[i]->names[ik]->nametwo = (char*)calloc(16, 1);
+                        snprintf(sknn[i]->names[ik++]->nametwo, 16, "skin%d", id % 100);
+                    }
+                }
+            }
         }
     }
 
@@ -858,12 +1010,12 @@ int main(int argc, char** argv)
     char* fileFound = (char*)calloc(256, 1);
     while (1)
     {
-        printf("type champion name or exit to exit: ");
+        printf("Type champion name or exit to exit: ");
         scanf("%s", Champion);
         if (strcmp(Champion, "exit") == 0)
             break;
 
-        int choose = 0;
+        int choose = -1;
         for (size_t i = 0; i < sized; i++)
         {
             if (strcicmp(Champion, nameida[i]->name) == 0 || strcicmp(Champion, nameida[i]->alias) == 0)
@@ -872,17 +1024,22 @@ int main(int argc, char** argv)
                 break;
             }
         }
+        if (choose == -1)
+        {
+            printf("Champion not found, try again.\n");
+            continue;
+        }
 
         for (int i = 0; i < nameida[choose]->alias[i]; i++)
             lower[i] = tolower(nameida[choose]->alias[i]);
 
-        snprintf(FileName, 256, "C:/Riot Games/League of Legends/Game/DATA/FINAL/Champions/%s.wad.client", nameida[choose]->alias);
+        snprintf(FileName, 256, "%s/Game/DATA/FINAL/Champions/%s.wad.client", leaguedir, nameida[choose]->alias);
         FILE* filew = fopen(FileName, "rb");
 
         fseek(filew, 268, SEEK_SET);
         uint32_t fileCount = 0;
         fread(&fileCount, 4, 1, filew);
-        HashTablefh* hasht = createHashTablefh(fileCount);
+        HashTableVoid* hasht = createHashTableVoid(fileCount);
         FileHeader** fharryb = (FileHeader**)malloc(sizeof(FileHeader*) * fileCount);
         for (uint32_t i = 0; i < fileCount; i++)
         {
@@ -890,7 +1047,7 @@ int main(int argc, char** argv)
             FileHeader* ori = (FileHeader*)calloc(1, sizeof(FileHeader));
             fread(ori, 32, 1, filew);
             memcpy(fharryb[i], ori, 32);
-            insertHashTablefh(hasht, ori->PathHash, ori);
+            insertHashTableVoid(hasht, ori->PathHash, ori);
         }
 
         uint32_t offsetwad = 0;
@@ -902,20 +1059,20 @@ int main(int argc, char** argv)
             if (fharryb[i]->Type != 2)
             {
                 offsetwad = 4;
-                uint32_t Signature = 0;
+                uint32_t Signaturee = 0;
                 char* data = extractdata("", fharryb[i]->PathHash, hasht, filew, NULL);
-                memfread(&Signature, 4, &data);
-                if (memcmp(&Signature, "PROP", 4) == 0)
+                memfread(&Signaturee, 4, &data);
+                if (memcmp(&Signaturee, "PROP", 4) == 0)
                 {
                     retbreak = 0;
                     uint32_t Version = 0;
                     memfread(&Version, 4, &data);
                     if (Version >= 2)
                     {
+                        offsetwad += 4;
                         uint32_t linkedFilesCount = 0;
                         memfread(&linkedFilesCount, 4, &data);
                         uint16_t stringlength = 0;
-                        offsetwad += 4;
                         for (uint32_t k = 0; k < linkedFilesCount; k++)
                         {
                             memfread(&stringlength, 2, &data);
@@ -959,7 +1116,7 @@ int main(int argc, char** argv)
                                     pointer = strstr(namestring, "Skin");
                                 if (pointer != NULL)
                                 {
-                                    namestring[pointer - namestring] = '\0';
+                                    namestring[pointer-namestring] = '\0';
                                     size_t namesize = strlen(namestring);
                                     char* namestringup = (char*)malloc(namesize);
                                     memcpy(namestringup, namestring, namesize);
@@ -972,10 +1129,10 @@ int main(int argc, char** argv)
                                     if (!foundname)
                                     {
                                         snprintf(champpath, 128, "data/characters/%s/skins/skin0.bin", namestring);
-                                        if (lookupHashTablefh(hasht, XXHash(champpath, strlen(champpath))) != NULL)
+                                        if (lookupHashTableVoid(hasht, XXHash(champpath, strlen(champpath))) != NULL)
                                         {
                                             sizechamp += 1;
-                                            nameschamp = (skinsid**)realloc(nameschamp, sizechamp * sizeof(*nameschamp));
+                                            nameschamp = (skinsid**)realloc(nameschamp, sizechamp * sizeof(skinsid*));
                                             nameschamp[indexchamp] = (skinsid*)malloc(sizeof(skinsid));
                                             nameschamp[indexchamp]->nameone = namestring;
                                             nameschamp[indexchamp]->nametwo = namestringup;
@@ -1025,8 +1182,8 @@ int main(int argc, char** argv)
         for (uint32_t k = 0; k < sknn[choose]->size; k++)
             printf("%d: %s\n", k + 1, sknn[choose]->names[k]->nameone);
 
+        uint8_t num = 0;
         uint8_t type = 1;
-        uint32_t num = 0;
         uint32_t offsete = 0;
         uint64_t hashindex = 0;
         FileHeader* fhpointer = fharryb[0];
@@ -1034,10 +1191,15 @@ int main(int argc, char** argv)
         FileHeader** fharry = (FileHeader**)malloc(sizeof(FileHeader*) * fileCount);
         while (1)
         {
-            printf("type skin number or 0 to exit: ");
-            scanf("%lu", &num);
+            printf("Type skin number or 0 to exit: ");
+            scanf("%hhu", &num);
             if (num == 0)
                 break;
+            else if (num >= sknn[choose]->size)
+            {
+                printf("Skin number not found, try again.\n");
+                continue;
+            }
 
             for (uint32_t i = 0; i < fileCount; i++)
             {
@@ -1057,7 +1219,7 @@ int main(int argc, char** argv)
                         break;
                     }
                 }
-                snprintf(champpath, 128, "data/characters/%s/skins/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num - 1]->nametwo);
+                snprintf(champpath, 128, "data/characters/%s/skins/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num-1]->nametwo);
                 char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo);
                 fhpointer->NewData = compressdata(dataskin, type, offsete, &fhpointer->CompressedSize);
                 memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
@@ -1073,7 +1235,7 @@ int main(int argc, char** argv)
                         break;
                     }
                 }
-                snprintf(champpath, 128, "data/characters/%s/animations/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num - 1]->nametwo);
+                snprintf(champpath, 128, "data/characters/%s/animations/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num-1]->nametwo);
                 char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo);
                 fhpointer->NewData = compressdata(dataanm, type, offsete, &fhpointer->CompressedSize);
                 memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
