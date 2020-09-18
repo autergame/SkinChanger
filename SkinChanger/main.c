@@ -1209,7 +1209,7 @@ int main(int argc, char** argv)
             scanf("%hhu", &num);
             if (num == 0)
                 break;
-            else if (num >= sknn[choose]->size)
+            else if (num > sknn[choose]->size)
             {
                 printf("Skin number not found, try again.\n");
                 continue;
