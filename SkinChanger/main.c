@@ -91,8 +91,8 @@ char* download_url(char* url, char* port, char* auth, char* protocol)
         char* authfull = calloc(256, 1);
         char* hostfull = calloc(256, 1);
         struct curl_slist* headers = NULL;
-        sprintf(authfull, "Authorization: Basic %s", auth);
-        sprintf(hostfull, "https://127.0.0.1:%s%s", port, url);
+        snprintf(authfull, 256, "Authorization: Basic %s", auth);
+        snprintf(hostfull, 256, "https://127.0.0.1:%s%s", port, url);
         curl_easy_setopt(curl, CURLOPT_URL, hostfull);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
@@ -172,9 +172,9 @@ uint8_t DataCompare(uint8_t* data, uint8_t* signature, uint8_t* mask, DWORD leng
 }
 DWORD FindAddress(uint8_t* signature, uint8_t* mask, int length, uint8_t* baseaddress, DWORD baselength)
 {
-    for (DWORD i = 0; i < (baselength - length); i++)
-        if (DataCompare(baseaddress + i, signature, mask, length))
-            return i;
+   for (DWORD i = 0; i < (baselength - length); i++)
+       if (DataCompare(baseaddress + i, signature, mask, length))
+           return i;
     return 0;
 }
 void* AllocateMemory(HANDLE handle, DWORD size)
@@ -716,10 +716,94 @@ typedef struct FileHeader
     char* NewData;
 } FileHeader;
 
+uint8_t uinttotype(uint8_t type)
+{
+    if (type & 0x80) 
+    {
+        type &= 0x7F;
+        type += 18;
+    }
+    return type;
+}
 void memfread(void* buf, size_t bytes, char** membuf)
 {
     memcpy(buf, *membuf, bytes);
     *membuf += bytes;
+}
+uint32_t binsize(uint8_t type, char** data)
+{
+    uint32_t size = 0;
+    switch (type)
+    {
+        case 1:
+        case 2:
+        case 3:
+        case 25:
+            size = 1;
+            break;
+        case 4:
+        case 5:
+            size = 2;
+            break;
+        case 6:
+        case 7:
+        case 10:
+        case 15:
+        case 17:
+        case 22:
+            size = 4;
+            break;
+        case 8:
+        case 9:
+        case 11:
+            size = 8;
+            break;
+        case 12:
+            size = 12;
+            break;
+        case 13:
+            size = 16;
+            break;
+        case 14:
+            size = 64;
+            break;
+        case 16:
+            memfread(&size, 2, data);
+            break;
+        case 18:
+        case 19:
+        {
+            *data += 1;
+            memfread(&size, 4, data);
+            break;
+        }
+        case 20:
+        case 21:
+        {
+            uint32_t name = 0;
+            memfread(&name, 4, data);
+            if (name != 0)
+                memfread(&size, 4, data);
+            break;
+        }
+        case 23:
+        {
+            uint8_t typee = 0;
+            uint8_t count = 0;
+            memfread(&typee, 1, data);
+            memfread(&count, 1, data);
+            typee = uinttotype(typee);
+            size = count != 0 ? binsize(typee, data) : 0;
+            break;
+        }
+        case 24:
+        {
+            *data += 2;
+            memfread(&size, 4, data);
+            break;
+        }
+    }
+    return size;
 }
 char* extractdata(char* champpath, uint64_t hash, HashTableVoid* hasht, FILE* fp, uint8_t* type)
 {
@@ -791,7 +875,7 @@ char* compressdata(char* data, uint8_t type, uint32_t siz, uint32_t* osize)
     }
     return datae;
 }
-char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uint32_t* offset, char* name, char* change)
+char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uint32_t* offset, uint8_t* anmid, uint32_t anmsize, char* name, char* change)
 {
     *offset = 12;
     change[0] = toupper(change[0]);
@@ -834,6 +918,41 @@ char* binmod(char* champpath, HashTableVoid* hasht, FILE* fp, uint8_t* type, uin
                 snprintf(skinpro, 128, "Characters/%s/Skins/Skin0", name);
                 entryKeyHash = FNV1Hash(skinpro);
                 memcpy(data, &entryKeyHash, 4);
+                if (anmid != NULL)
+                {
+                    uint32_t offsete = data; data += 4;
+                    uint16_t fieldcount = 0; 
+                    memfread(&fieldcount, 2, &data);
+                    for (uint16_t o = 0; o < fieldcount; o++)
+                    {
+                        uint32_t namee = 0;
+                        memfread(&namee, 4, &data);
+                        uint8_t type = 0;
+                        memfread(&type, 1, &data);
+                        type = uinttotype(type);
+                        if (namee == 0x426D89A3)
+                        {
+                            data += 15;
+                            uint32_t value = 0;
+                            memfread(&value, 4, &data);
+                            for (uint8_t e = 0; e < anmsize; e++)
+                            {
+                                snprintf(skinpro, 128, "Characters/%s/Animations/Skin%d", name, e);
+                                if (value == FNV1Hash(skinpro))
+                                {
+                                    *anmid = e;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                        else
+                        {
+                            data += binsize(type, &data);
+                        }
+                    }
+                    data -= (uint32_t)data - offsete;
+                }
             }
         }
         else if (entryTypes[i] == 0xEF3A0F33)
@@ -897,9 +1016,13 @@ int main(int argc, char** argv)
     overlay[overlaypos-overlay] = '\0';
     strcat_s(overlay, 256, "\\Overlay\\");
     char* pathfile = (char*)calloc(256, 1);
-    sprintf(pathfile, "%sDATA\\FINAL\\Champions\\", overlay);
+    snprintf(pathfile, 256, "%sDATA\\FINAL\\Champions\\", overlay);
     if(directoryexist(pathfile) == FALSE)
         createfolder(pathfile);
+    char* pathglobal = (char*)calloc(256, 1);
+    snprintf(pathglobal, 256, "%sDATA\\FINAL\\Localized\\", overlay);
+    if (directoryexist(pathglobal) == FALSE)
+        createfolder(pathglobal);
     for (size_t i = 0; i < strlen(overlay); i++)
         if (overlay[i] == '\\')
             overlay[i] = '/';
@@ -926,7 +1049,13 @@ int main(int argc, char** argv)
     snprintf(lockfiledir, 256, "%s/lockfile", leaguedir);
     FILE* lockfile = fopen(lockfiledir, "rb");
     fseek(lockfile, 0, SEEK_END);
-    long fsize = ftell(lockfile);
+    long fsize = ftell(lockfile);     
+    while (fsize == 0)
+    {
+        lockfile = fopen(lockfiledir, "rb");
+        fseek(lockfile, 0, SEEK_END);
+        fsize = ftell(lockfile);
+    }
     fseek(lockfile, 0, SEEK_SET);
     char* lockstr = (char*)malloc(fsize + 1);
     fread(lockstr, fsize, 1, lockfile);
@@ -939,7 +1068,7 @@ int main(int argc, char** argv)
     char* password = strtok(NULL, delim);
     char* protocol = strtok(NULL, delim);
     char* passauth = (char*)calloc(128, 1);
-    sprintf(passauth, "riot:%s", password);
+    snprintf(passauth, 128, "riot:%s", password);
     char* auth = base64_encode(passauth, strlen(passauth));
 
     char* locale = download_url("/riotclient/region-locale", port, auth, protocol);
@@ -1014,10 +1143,53 @@ int main(int argc, char** argv)
         }
     }
 
+    char* FileNameglobal = (char*)calloc(256, 1);
+    FileHeader* filegh = (FileHeader*)calloc(1, sizeof(FileHeader));
+    snprintf(FileNameglobal, 256, "%s/Game/DATA/FINAL/Localized/Global.%s.wad.client", leaguedir, region);
+    FILE* fileg = fopen(FileNameglobal, "rb");
+    fseek(fileg, 272, SEEK_SET);
+    fread(filegh, 32, 1, fileg);
+    char* datag = (char*)malloc(filegh->FileSize);
+    size_t datagoffset = (size_t)datag;
+    fseek(fileg, filegh->Offset, SEEK_SET);
+    char* compresseddata = (char*)malloc(filegh->CompressedSize);
+    fread(compresseddata, filegh->CompressedSize, 1, fileg);
+    size_t error = ZSTD_decompress(datag, filegh->FileSize, compresseddata, filegh->CompressedSize);
+    if (ZSTD_isError(error))
+        printf("%s\n", ZSTD_getErrorName(error));
+    free(compresseddata);
+    uint32_t magicrst = 0;
+    memfread(&magicrst, 3, &datag);
+    uint8_t majorrst = 0;
+    memfread(&majorrst, 1, &datag);
+    uint8_t minorrst = 0;
+    memfread(&minorrst, 1, &datag);
+    char* fontconfig = NULL;
+    if (minorrst == 1)
+    {
+        uint32_t size = 0;
+        memfread(&size, 4, &datag);
+        fontconfig = (char*)calloc(size, 1);
+        memfread(fontconfig, size, &datag);
+        fontconfig[size] = '\0';
+    }
+    uint32_t countg = 0;
+    memfread(&countg, 4, &datag);
+    uint64_t* hashoffset = (uint64_t*)calloc(countg, 8);
+    memfread(hashoffset, countg * 8, &datag); datag += 1;
+    uint32_t datagsize = filegh->FileSize - ((size_t)datag - datagoffset);
+    char* dataglobal = (char*)calloc(1, datagsize);
+    memfread(dataglobal, datagsize, &datag);
+    uint64_t* hashoffsetbak = (uint64_t*)calloc(countg, 8);
+    memcpy(hashoffsetbak, hashoffset, countg * 8);
+    fclose(fileg);
+
+    uint32_t filecountg = 1;
     uint16_t MajorMinor = 3;
     uint16_t Signature = 22354;
     char* lower = (char*)calloc(32, 1);
     char* nulls = (char*)calloc(264, 1);
+    char* hdstr = (char*)calloc(128, 1);
     char* Champion = (char*)calloc(32, 1);
     char* FileName = (char*)calloc(256, 1);
     char* champpath = (char*)calloc(128, 1);
@@ -1182,15 +1354,15 @@ int main(int argc, char** argv)
             nameschamp[indexchamp]->nametwo = nameida[choose]->alias;
         }
 
-        WIN32_FIND_DATA info;
-        sprintf(fileFound, "%sDATA/FINAL/Champions/*.*", overlay);
-        HANDLE hp = FindFirstFileA(fileFound, &info);
+        WIN32_FIND_DATA infof;
+        snprintf(fileFound, 256, "%sDATA/FINAL/Champions/*.*", overlay);
+        HANDLE hp = FindFirstFileA(fileFound, &infof);
         do
         {
-            sprintf(fileFound, "%sDATA/FINAL/Champions/%s", overlay, info.cFileName);
+            snprintf(fileFound, 256, "%sDATA/FINAL/Champions/%s", overlay, infof.cFileName);
             DeleteFileA(fileFound);
 
-        } while (FindNextFileA(hp, &info));
+        } while (FindNextFileA(hp, &infof));
         FindClose(hp);
 
         for (uint32_t k = 0; k < sknn[choose]->size; k++)
@@ -1198,6 +1370,7 @@ int main(int argc, char** argv)
 
         uint8_t num = 0;
         uint8_t type = 1;
+        uint8_t anmid = 0;
         uint32_t offsete = 0;
         uint64_t hashindex = 0;
         FileHeader* fhpointer = fharryb[0];
@@ -1234,26 +1407,29 @@ int main(int argc, char** argv)
                     }
                 }
                 snprintf(champpath, 128, "data/characters/%s/skins/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num-1]->nametwo);
-                char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo, sknn[choose]->names[num-1]->nametwo);
+                char* dataskin = binmod(champpath, hasht, filew, &type, &offsete, &anmid, sknn[choose]->size+1, nameschamp[i]->nametwo, sknn[choose]->names[num-1]->nametwo);
                 fhpointer->NewData = compressdata(dataskin, type, offsete, &fhpointer->CompressedSize);
                 memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
                 fhpointer->FileSize = offsete;
-
-                snprintf(champpath, 128, "data/characters/%s/animations/skin0.bin", nameschamp[i]->nameone);
-                hashindex = XXHash(champpath, strlen(champpath));
-                for (uint32_t i = 0; i < fileCount; i++)
+                
+                if (anmid != 0)
                 {
-                    if (fharry[i]->PathHash == hashindex)
+                    snprintf(champpath, 128, "data/characters/%s/animations/skin0.bin", nameschamp[i]->nameone);
+                    hashindex = XXHash(champpath, strlen(champpath));
+                    for (uint32_t i = 0; i < fileCount; i++)
                     {
-                        fhpointer = fharry[i];
-                        break;
+                        if (fharry[i]->PathHash == hashindex)
+                        {
+                            fhpointer = fharry[i];
+                            break;
+                        }
                     }
+                    snprintf(champpath, 128, "data/characters/%s/animations/skin%d.bin", nameschamp[i]->nameone, anmid);
+                    char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, NULL, NULL, nameschamp[i]->nametwo, sknn[choose]->names[num-1]->nametwo);
+                    fhpointer->NewData = compressdata(dataanm, type, offsete, &fhpointer->CompressedSize);
+                    memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
+                    fhpointer->FileSize = offsete;
                 }
-                snprintf(champpath, 128, "data/characters/%s/animations/%s.bin", nameschamp[i]->nameone, sknn[choose]->names[num-1]->nametwo);
-                char* dataanm = binmod(champpath, hasht, filew, &type, &offsete, nameschamp[i]->nametwo, sknn[choose]->names[num-1]->nametwo);
-                fhpointer->NewData = compressdata(dataanm, type, offsete, &fhpointer->CompressedSize);
-                memcpy(&fhpointer->SHA256, SHA256(fhpointer->NewData, fhpointer->CompressedSize), 8);
-                fhpointer->FileSize = offsete;
             }
 
             snprintf(FileName, 256, "%sDATA/FINAL/Champions/%s.wad.client", overlay, nameida[choose]->alias);
@@ -1309,6 +1485,59 @@ int main(int argc, char** argv)
 
             for (uint32_t i = 0; i < fileCount; i++)
                 free(fharry[i]);
+
+            snprintf(hdstr, 128, "game_character_displayname_%s", lower);
+            uint64_t hd = XXHash(hdstr, strlen(hdstr)) & 0xffffffffff;
+            snprintf(hdstr, 128, "game_character_skin_displayname_%s_%d", lower, atoi(sknn[choose]->names[num-1]->nametwo + 4));
+            uint64_t hdm = XXHash(hdstr, strlen(hdstr)) & 0xffffffffff;
+            memcpy(hashoffset, hashoffsetbak, countg * 8);
+            for (uint32_t i = 0; i < countg; i++)
+            {
+                if ((hashoffset[i] & 0xffffffffff) == hd)
+                {
+                    for (uint32_t k = 0; k < countg; k++)
+                    {
+                        if ((hashoffset[k] & 0xffffffffff) == hdm)
+                        {
+                            hashoffset[i] = hd + ((hashoffset[k] >> 40) << 40);
+                        }
+                    }
+                }
+            }
+
+            snprintf(FileNameglobal, 256, "%sDATA/FINAL/Localized/Global.%s.wad.client", overlay, region);
+            FILE* filegw = fopen(FileNameglobal, "wb");
+
+            fwrite(&Signature, 2, 1, filegw);
+            fwrite(&MajorMinor, 2, 1, filegw);
+            fwrite(nulls, 1, 264, filegw);
+            fwrite(&filecountg, 4, 1, filegw);
+
+            char* datagm = (char*)calloc(1, filegh->FileSize);
+            memcpy(datagm, &magicrst, 3); datagm += 3;
+            memcpy(datagm, &majorrst, 1); datagm += 1;
+            memcpy(datagm, &minorrst, 1); datagm += 1;
+            if (minorrst == 1)
+            {
+                uint32_t size = strlen(fontconfig);
+                memcpy(datagm, &size, 4); datagm += 4;
+                memcpy(datagm, fontconfig, size); datagm += size;
+            }
+            memcpy(datagm, &countg, 4); datagm += 4;
+            memcpy(datagm, hashoffset, countg * 8); datagm += countg * 8;
+            memcpy(datagm, &minorrst, 1); datagm += 1;
+            memcpy(datagm, dataglobal, datagsize); datagm += datagsize;
+            datagm -= filegh->FileSize;
+
+            size_t asize = ZSTD_compressBound(filegh->FileSize);
+            char* datae = (char*)calloc(1, asize);
+            filegh->CompressedSize = ZSTD_compress(datae, asize, datagm, filegh->FileSize, 3);
+            memcpy(&filegh->SHA256, SHA256(datae, filegh->CompressedSize), 8);
+            fwrite(filegh, 32, 1, filegw);
+            fwrite(datae, filegh->CompressedSize, 1, filegw);
+            fclose(filegw);
+            free(datagm);
+            free(datae);
         }
         fclose(filew);
         memset(lower, 0, 32);
